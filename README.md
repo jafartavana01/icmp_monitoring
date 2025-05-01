@@ -2,6 +2,8 @@
 
 A real-time network monitoring tool that uses ICMP (ping) to track the responsiveness of network hosts. Built with Flask and Chart.js.
 
+![Network Monitor Screenshot](Screenshot%201404-02-12%20at%2000.32.17.png)
+
 ## Features
 
 - Real-time ping monitoring of multiple hosts
