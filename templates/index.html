@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Network Monitor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        .host-container {
+            margin: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background-color: white;
+            position: relative;
+        }
+        .chart-container {
+            position: relative;
+            height: 200px;
+            width: 100%;
+        }
+        .timeout {
+            background-color: rgba(255, 0, 0, 0.1);
+        }
+        .delete-btn {
+            display: none;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 5px 10px;
+            background-color: #ff4444;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .host-container:hover .delete-btn {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Network Monitor</h1>
+        <div class="input-container">
+            <input type="text" id="hostInput" placeholder="Enter hostname or IP (e.g., google.com, 192.168.1.1)">
+            <button onclick="addHost()">Add Host</button>
+        </div>
+    </div>
+    <div id="charts"></div>
+
+    <script>
+        const socket = io();
+        const charts = {};
+        const datasets = {};
+        const maxDataPoints = 100;
+
+        function createChart(host) {
+            const containerDiv = document.createElement('div');
+            containerDiv.className = 'host-container';
+            containerDiv.id = `container-${host}`;
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.textContent = 'Remove';
+            deleteBtn.onclick = () => removeHost(host);
+
+            const canvasDiv = document.createElement('div');
+            canvasDiv.className = 'chart-container';
+            
+            const canvas = document.createElement('canvas');
+            canvas.id = `chart-${host}`;
+            
+            canvasDiv.appendChild(canvas);
+            containerDiv.appendChild(deleteBtn);
+            containerDiv.appendChild(canvasDiv);
+            document.getElementById('charts').appendChild(containerDiv);
+
+            datasets[host] = [];
+            
+            charts[host] = new Chart(canvas.getContext('2d'), {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: `Response Time (ms) - ${host}`,
+                        data: datasets[host],
+                        borderColor: 'rgb(75, 192, 192)',
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            suggestedMax: 200
+                        }
+                    }
+                }
+            });
+        }
+
+        function addHost() {
+            const host = document.getElementById('hostInput').value.trim();
+            if (host && !charts[host]) {
+                fetch('/add_host', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({host: host})
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        createChart(host);
+                    } else {
+                        alert(data.message);
+                    }
+                });
+            }
+        }
+
+        function removeHost(host) {
+            fetch('/remove_host', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({host: host})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    const container = document.getElementById(`container-${host}`);
+                    container.remove();
+                    delete charts[host];
+                    delete datasets[host];
+                }
+            });
+        }
+
+        socket.on('ping_update', function(data) {
+            const chart = charts[data.host];
+            if (chart) {
+                const container = document.getElementById(`container-${data.host}`);
+                if (data.status === 'timeout' || data.status === 'error') {
+                    container.classList.add('timeout');
+                } else {
+                    container.classList.remove('timeout');
+                }
+
+                const timestamp = new Date().toLocaleTimeString();
+                datasets[data.host].push({
+                    x: timestamp,
+                    y: data.response || 0
+                });
+
+                if (datasets[data.host].length > maxDataPoints) {
+                    datasets[data.host].shift();
+                }
+
+                chart.data.labels = datasets[data.host].map(point => point.x);
+                chart.data.datasets[0].data = datasets[data.host];
+                chart.update();
+            }
+        });
+    </script>
+</body>
+</html>
