@@ -2,10 +2,16 @@
 <html>
 <head>
     <title>Network Monitor</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
+        .dark {
+            background-color: #111827;
+            color: #f3f4f6;
+        }
         .host-container {
             margin: 20px;
             padding: 15px;
@@ -13,68 +19,138 @@
             border-radius: 5px;
             background-color: white;
             position: relative;
+            transition: all 0.3s ease;
+        }
+        .dark .host-container {
+            background-color: #1f2937;
+            border-color: #374151;
         }
         .chart-container {
             position: relative;
             height: 200px;
             width: 100%;
+            background-color: white;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .dark .chart-container {
+            background-color: #374151;
         }
         .timeout {
-            background-color: rgba(255, 0, 0, 0.1);
+            background-color: rgba(239, 68, 68, 0.1);
         }
         .delete-btn {
-            display: none;
             position: absolute;
             top: 10px;
             right: 10px;
             padding: 5px 10px;
-            background-color: #ff4444;
+            background-color: #ef4444;
             color: white;
             border: none;
             border-radius: 3px;
             cursor: pointer;
+            opacity: 0;
+            transition: opacity 0.2s ease;
         }
         .host-container:hover .delete-btn {
-            display: block;
+            opacity: 1;
+        }
+        .status-up {
+            color: #10b981;
+        }
+        .dark .status-up {
+            color: #34d399;
+        }
+        .status-down {
+            color: #ef4444;
+        }
+        .dark .status-down {
+            color: #f87171;
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
         }
     </style>
 </head>
-<body>
-    <div class="header">
-        <h1>Network Monitor</h1>
-        <div class="input-container">
-            <input type="text" id="hostInput" placeholder="Enter hostname or IP (e.g., google.com, 192.168.1.1)">
-            <button onclick="addHost()">Add Host</button>
+<body class="bg-gray-50">
+    <div class="container mx-auto px-4 py-8">
+        <div class="flex justify-between items-center mb-8">
+            <h1 class="text-3xl font-bold">Network Monitor</h1>
+            <button onclick="toggleTheme()" class="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600">
+                🌙
+            </button>
         </div>
+
+        <div class="mb-8">
+            <div class="flex gap-4">
+                <input type="text" id="hostInput" 
+                    placeholder="Enter hostname or IP (e.g., google.com, 192.168.1.1)"
+                    class="flex-1 p-2 border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                <button onclick="addHost()" 
+                    class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">
+                    Add Host
+                </button>
+            </div>
+        </div>
+
+        <div id="hosts" class="grid gap-6"></div>
     </div>
-    <div id="charts"></div>
 
     <script>
         const socket = io();
         const charts = {};
         const datasets = {};
         const maxDataPoints = 100;
+        let isDark = false;
+
+        function toggleTheme() {
+            isDark = !isDark;
+            document.body.classList.toggle('dark');
+            document.querySelector('button').textContent = isDark ? '🌞' : '🌙';
+            
+            // Update chart themes
+            Object.values(charts).forEach(chart => {
+                chart.options.scales.y.grid.color = isDark ? '#374151' : '#e5e7eb';
+                chart.options.scales.x.grid.color = isDark ? '#374151' : '#e5e7eb';
+                chart.update();
+            });
+        }
 
         function createChart(host) {
-            const containerDiv = document.createElement('div');
-            containerDiv.className = 'host-container';
-            containerDiv.id = `container-${host}`;
+            const hostDiv = document.createElement('div');
+            hostDiv.className = 'host-container fade-in';
+            hostDiv.id = `container-${host}`;
+
+            const headerDiv = document.createElement('div');
+            headerDiv.className = 'flex justify-between items-center mb-4';
+            
+            const hostInfo = document.createElement('div');
+            hostInfo.innerHTML = `
+                <h3 class="text-lg font-medium">${host}</h3>
+                <p id="status-${host}" class="text-sm"></p>
+            `;
 
             const deleteBtn = document.createElement('button');
             deleteBtn.className = 'delete-btn';
             deleteBtn.textContent = 'Remove';
             deleteBtn.onclick = () => removeHost(host);
 
-            const canvasDiv = document.createElement('div');
-            canvasDiv.className = 'chart-container';
+            const chartDiv = document.createElement('div');
+            chartDiv.className = 'chart-container';
             
             const canvas = document.createElement('canvas');
             canvas.id = `chart-${host}`;
             
-            canvasDiv.appendChild(canvas);
-            containerDiv.appendChild(deleteBtn);
-            containerDiv.appendChild(canvasDiv);
-            document.getElementById('charts').appendChild(containerDiv);
+            headerDiv.appendChild(hostInfo);
+            headerDiv.appendChild(deleteBtn);
+            chartDiv.appendChild(canvas);
+            hostDiv.appendChild(headerDiv);
+            hostDiv.appendChild(chartDiv);
+            document.getElementById('hosts').appendChild(hostDiv);
 
             datasets[host] = [];
             
@@ -85,17 +161,36 @@
                     datasets: [{
                         label: `Response Time (ms) - ${host}`,
                         data: datasets[host],
-                        borderColor: 'rgb(75, 192, 192)',
-                        tension: 0.1
+                        borderColor: '#10b981',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        tension: 0.3
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    animation: {
+                        duration: 300
+                    },
                     scales: {
                         y: {
                             beginAtZero: true,
-                            suggestedMax: 200
+                            grid: {
+                                color: isDark ? '#374151' : '#e5e7eb'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                color: isDark ? '#374151' : '#e5e7eb'
+                            },
+                            ticks: {
+                                maxTicksLimit: 8
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
                         }
                     }
                 }
@@ -105,7 +200,7 @@
         function addHost() {
             const host = document.getElementById('hostInput').value.trim();
             if (host && !charts[host]) {
-                fetch('/add_host', {
+                fetch('/api/hosts', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({host: host})
@@ -114,6 +209,7 @@
                 .then(data => {
                     if (data.status === 'success') {
                         createChart(host);
+                        document.getElementById('hostInput').value = '';
                     } else {
                         alert(data.message);
                     }
@@ -122,16 +218,15 @@
         }
 
         function removeHost(host) {
-            fetch('/remove_host', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({host: host})
+            fetch(`/api/hosts/${host}`, {
+                method: 'DELETE'
             })
             .then(response => response.json())
             .then(data => {
                 if (data.status === 'success') {
                     const container = document.getElementById(`container-${host}`);
-                    container.remove();
+                    container.classList.add('fade-out');
+                    setTimeout(() => container.remove(), 300);
                     delete charts[host];
                     delete datasets[host];
                 }
@@ -142,25 +237,40 @@
             const chart = charts[data.host];
             if (chart) {
                 const container = document.getElementById(`container-${data.host}`);
-                if (data.status === 'timeout' || data.status === 'error') {
+                const statusEl = document.getElementById(`status-${data.host}`);
+                
+                if (data.status === 'DOWN' || data.status === 'ERROR') {
                     container.classList.add('timeout');
+                    statusEl.className = 'text-sm status-down';
+                    chart.data.datasets[0].borderColor = '#ef4444';
+                    chart.data.datasets[0].backgroundColor = 'rgba(239, 68, 68, 0.1)';
                 } else {
                     container.classList.remove('timeout');
+                    statusEl.className = 'text-sm status-up';
+                    chart.data.datasets[0].borderColor = '#10b981';
+                    chart.data.datasets[0].backgroundColor = 'rgba(16, 185, 129, 0.1)';
                 }
+                
+                statusEl.textContent = `${data.status} - ${data.response ? data.response.toFixed(2) + 'ms' : 'No response'}`;
 
                 const timestamp = new Date().toLocaleTimeString();
-                datasets[data.host].push({
-                    x: timestamp,
-                    y: data.response || 0
-                });
+                datasets[data.host].push(data.response || 0);
+                chart.data.labels.push(timestamp);
 
                 if (datasets[data.host].length > maxDataPoints) {
                     datasets[data.host].shift();
+                    chart.data.labels.shift();
                 }
 
-                chart.data.labels = datasets[data.host].map(point => point.x);
                 chart.data.datasets[0].data = datasets[data.host];
-                chart.update();
+                chart.update('quiet');
+            }
+        });
+
+        // Handle Enter key in input field
+        document.getElementById('hostInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                addHost();
             }
         });
     </script>
